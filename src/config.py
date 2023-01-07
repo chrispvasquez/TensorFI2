@@ -10,7 +10,7 @@ def config(confFile):
         print("Make sure the correct path is passed to the inject call.")
         sys.exit()
     if(confFile.endswith(".yaml")):
-        fiConf = yaml.load(fiConfs)
+        fiConf = yaml.full_load(fiConfs)
     else:
         print("Unsupported file format:", confFile)
         sys.exit()

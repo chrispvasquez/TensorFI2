@@ -2,6 +2,8 @@
 
 import os, logging
 
+from datetime import datetime
+
 import tensorflow as tf
 from struct import pack, unpack
 
@@ -25,13 +27,19 @@ def bitflip(f, pos):
 
 class inject():
 	def __init__(
-		self, model, confFile, log_level="ERROR", **kwargs
+		self, model, confFile, log_level="DEBUG", **kwargs
 		):
 
 		# Logging setup
-		logging.basicConfig()
-		logging.getLogger().setLevel(log_level)
-		logging.debug("Logging level set to {0}".format(log_level))
+		log_dir = os.path.join(os.environ['CONDA_PREFIX'],"TensorFI2/logs")
+		if not os.path.exists(log_dir):
+			os.mkdir(log_dir)
+
+		logging.basicConfig(filename=os.path.join(log_dir, datetime.now().strftime('TFI2_%d_%m_%Y_%H_%M_%S.log')), format="%(message)s", filemode='w')
+
+		self.logger = logging.getLogger()
+		self.logger.setLevel(log_level)
+		self.logger.debug("Logging level set to {0}".format(log_level) + "\n")
 
 		# Retrieve config params
 		fiConf = config.config(confFile)
@@ -48,12 +56,16 @@ class inject():
 		if(fiConf["Mode"] == "single"):
 
 			""" Single layer fault injection mode """
-
-			logging.info("Starting fault injection in a random layer")
+			
+			self.logger.info(str(datetime.now().strftime("%d/%m/%Y %H:%M:%S"))+":")
+			self.logger.info("----------------Starting fault injection in a random layer----------------\n")
 
 			# Retrieve type and amount of fault
 			fiFault = fiConf["Type"]
 			fiSz = fiConf["Amount"]
+
+			self.logger.info("Type of Fault: " + str(fiConf["Type"]))
+			self.logger.info("Amount of Faults: " + str(fiConf["Amount"]))
 
 			# Choose a random layer for injection
 			randnum = random.randint(0, len(model.trainable_variables) - 1)
@@ -62,12 +74,19 @@ class inject():
 			v = model.trainable_variables[randnum]
 			num = v.shape.num_elements()
 
+			self.logger.info("\nOriginal Layer [" + str(randnum) + "]: \n")
+			self.logger.info(model.trainable_variables[randnum].numpy())
+			self.logger.info("\nNumber of Elements in Layer: " + str(v.shape.num_elements()))
+
 			if(fiFault == "zeros"):
 				fiSz = (fiSz * num) / 100
 				fiSz = math.floor(fiSz)
 
 			# Choose the indices for FI
-			ind = random.sample(range(num), fiSz)
+			#ind = random.sample(range(num), fiSz)
+			ind = np.random.choice(range(num), fiSz, replace=True)
+
+			self.logger.info("Layer Element Indicies (#s) to Inject: " + str(ind) + "\n")
 
 			# Unstack elements into a single dimension
 			elem_shape = v.shape
@@ -76,12 +95,19 @@ class inject():
 			v_ = tf.unstack(v_)
 
 			# Inject the specified fault into the randomly chosen values
+			item_counter = 0
+
 			if(fiFault == "zeros"):
 				for item in ind:
+					self.logger.info("("+ str(item_counter) +") Original Element #" + str(item) + " Value: " + str(float(v_[item])))
 					v_[item] = 0.
+					item_counter+=1
 			elif(fiFault == "random"):
 				for item in ind:
+					self.logger.info("("+ str(item_counter) +") Original Element #" + str(item) + " Value: " + str(float(v_[item])))
 					v_[item] = np.random.random()
+					self.logger.info("("+ str(item_counter) +") Faulty Element #" + str(item) + " Value:   " + str(v_[item]))
+					item_counter+=1
 			elif(fiFault == "bitflips"):
 				for item in ind:
 					val = v_[item]
@@ -89,11 +115,18 @@ class inject():
 					# If random bit chosen to be flipped
 					if(fiConf["Bit"] == "N"):
 						pos = random.randint(0, 31)
+						self.logger.info("("+ str(item_counter) +") Bit Position in 32-Bit Element #" + str(item) + " to be Flipped: " + str(pos))
 
 					# If bit position specified for flip
 					else:
 						pos = int(fiConf["Bit"])
+						self.logger.info("("+ str(item_counter) +") Bit Position in 32-Bit Element #" + str(item) + " to be Flipped:" + str(pos))
+
 					val_ = bitflip(val, pos)
+					self.logger.info("("+ str(item_counter) +") Original #" + str(item) + " Value: " + str(float(v_[item])))
+					self.logger.info("("+ str(item_counter) +") Faulty #" + str(item) + " Value:   " + str(val_))
+					self.logger.info("")
+					item_counter+=1
 					v_[item] = val_
 
 			# Reshape into original dimensions and store the faulty tensor
@@ -101,17 +134,24 @@ class inject():
 			v_ = tf.reshape(v_, elem_shape)
 			v.assign(v_)
 
-			logging.info("Completed injections... exiting")
+			self.logger.info("Faulty Layer [" + str(randnum) + "]: \n")
+			self.logger.info(tf.reshape(v_, elem_shape).numpy())
+
+			self.logger.info("Completed injections... exiting")
 
 		elif(fiConf["Mode"] == "multiple"):
 
 			""" Multiple layer fault injection mode """
 
-			logging.info("Starting fault injection in all layers")
+			self.logger.info(str(datetime.now().strftime("%d/%m/%Y %H:%M:%S"))+":")
+			self.logger.info("----------------Starting fault injection in all layers----------------\n")
 
 			# Retrieve type and amount of fault
 			fiFault = fiConf["Type"]
 			fiSz = fiConf["Amount"]
+
+			self.logger.info("Type of Fault: " + str(fiConf["Type"]))
+			self.logger.info("Amount of Faults: " + str(fiConf["Amount"]))
 
 			# Loop through each available layer in the model
 			for n in range(len(model.trainable_variables) - 1):
@@ -120,12 +160,19 @@ class inject():
 				v = model.trainable_variables[n]
 				num = v.shape.num_elements()
 
+				self.logger.info("\nOriginal Layer [" + str(n) + "]: \n")
+				self.logger.info(model.trainable_variables[n].numpy())
+				self.logger.info("\nNumber of Elements in Layer: " + str(v.shape.num_elements()))
+
 				if(fiFault == "zeros"):
 					fiSz = (fiSz * num) / 100
 					fiSz = math.floor(fiSz)
 
 				# Choose the indices for FI
-				ind = random.sample(range(num), fiSz)
+				#ind = random.sample(range(num), fiSz)
+				ind = np.random.choice(range(num), fiSz, replace=True)
+
+				self.logger.info("Layer Element Indicies (#s) to Inject: " + str(ind) + "\n")
 
 				# Unstack elements into a single dimension
 				elem_shape = v.shape
@@ -134,12 +181,19 @@ class inject():
 				v_ = tf.unstack(v_)
 
 				# Inject the specified fault into the randomly chosen values
+				item_counter = 0
+
 				if(fiFault == "zeros"):
 					for item in ind:
+						self.logger.info("("+ str(item_counter) +") Original Element #" + str(item) + " Value: " + str(float(v_[item])))
 						v_[item] = 0.
+						item_counter+=1
 				elif(fiFault == "random"):
 					for item in ind:
+						self.logger.info("("+ str(item_counter) +") Original Element #" + str(item) + " Value: " + str(float(v_[item])))
 						v_[item] = np.random.random()
+						self.logger.info("("+ str(item_counter) +") Faulty Element #" + str(item) + " Value:   " + str(v_[item]))
+						item_counter+=1
 				elif(fiFault == "bitflips"):
 					for item in ind:
 						val = v_[item]
@@ -147,11 +201,17 @@ class inject():
 						# If random bit chosen to be flipped
 						if(fiConf["Bit"] == "N"):
 							pos = random.randint(0, 31)
+							self.logger.info("("+ str(item_counter) +") Bit Position in 32-Bit Element #" + str(item) + " to be Flipped: " + str(pos))
+
 
 						# If bit position specified for flip
 						else:
 							pos = int(fiConf["Bit"])
 						val_ = bitflip(val, pos)
+						self.logger.info("("+ str(item_counter) +") Original #" + str(item) + " Value: " + str(float(v_[item])))
+						self.logger.info("("+ str(item_counter) +") Faulty #" + str(item) + " Value:   " + str(val_))
+						self.logger.info("")
+						item_counter+=1
 						v_[item] = val_
 
 				# Reshape into original dimensions and store the faulty tensor
@@ -159,7 +219,10 @@ class inject():
 				v_ = tf.reshape(v_, elem_shape)
 				v.assign(v_)
 
-			logging.info("Completed injections... exiting")
+				self.logger.info("Faulty Layer [" + str(n) + "]: \n")
+				self.logger.info(tf.reshape(v_, elem_shape).numpy())
+
+			self.logger.info("Completed injections... exiting")
 
 
 	def layer_outputs(self, model, fiConf, **kwargs):
@@ -170,11 +233,15 @@ class inject():
 
 			""" Single layer fault injection mode """
 
-			logging.info("Starting fault injection in a random layer")
+			self.logger.info(str(datetime.now().strftime("%d/%m/%Y %H:%M:%S"))+":")
+			self.logger.info("----------------Starting fault injection in a random layer----------------\n")
 
 			# Retrieve type and amount of fault
 			fiFault = fiConf["Type"]
 			fiSz = fiConf["Amount"]
+
+			self.logger.info("Type of Fault: " + str(fiConf["Type"]))
+			self.logger.info("Amount of Faults: " + str(fiConf["Amount"]))
 
 			# Get the input for which dynamic injection is to be done
 			x_test = kwargs["x_test"]
@@ -186,7 +253,11 @@ class inject():
 
 			# Get the outputs of the chosen layer
 			get_output = K.function([model.layers[0].input], [fiLayer.output])
+
 			fiLayerOutputs = get_output([x_test])
+
+			self.logger.info("\n Original Layer [" + str(randnum) + "] Outputs: \n")
+			self.logger.info(get_output([x_test]))
 
 			# Unstack elements into a single dimension
 			elem_shape = fiLayerOutputs[0].shape
@@ -198,46 +269,73 @@ class inject():
 				fiSz = math.floor(fiSz)
 
 			# Choose the indices for FI
-			ind = random.sample(range(num), fiSz)
+			#ind = random.sample(range(num), fiSz)
+			ind = np.random.choice(range(num), fiSz, replace=True)
+
+			self.logger.info("\nLayer Output Indicies (#s) to Inject: " + str(ind) + "\n")
 
 			# Inject the specified fault into the randomly chosen values
+			item_counter = 0
+
 			if(fiFault == "zeros"):
 				for item in ind:
+					self.logger.info("("+ str(item_counter) +") Original Output #" + str(item) + " Value: " + str(float(fiLayerOutputs[0][item])))
 					fiLayerOutputs[0][item] = 0.
+					item_counter+=1
 			elif(fiFault == "random"):
 				for item in ind:
+					self.logger.info("("+ str(item_counter) +") Original Output #" + str(item) + " Value: " + str(float(fiLayerOutputs[0][item])))
 					fiLayerOutputs[0][item] = np.random.random()
+					self.logger.info("("+ str(item_counter) +") Faulty Output #" + str(item) + " Value:   " + str(fiLayerOutputs[0][item]))
+					item_counter+=1
 			elif(fiFault == "bitflips"):
 				for item in ind:
 					val = fiLayerOutputs[0][item]
 					if(fiConf["Bit"] == "N"):
 						pos = random.randint(0, 31)
+						self.logger.info("("+ str(item_counter) +") Bit Position in 32-Bit Output #" + str(item) + " to be Flipped: " + str(pos))
 					else:
 						pos = int(fiConf["Bit"])
+						self.logger.info("("+ str(item_counter) +") Bit Position in 32-Bit Output #" + str(item) + " to be Flipped:" + str(pos))
+
 					val_ = bitflip(val, pos)
 					fiLayerOutputs[0][item] = val_
+
+					self.logger.info("("+ str(item_counter) +") Original #" + str(item) + " Value: " + str(float(val)))
+					self.logger.info("("+ str(item_counter) +") Faulty #" + str(item) + " Value:   " + str(val_))
+					self.logger.info("")
+					item_counter+=1
 
 			# Reshape into original dimensions and get the final prediction
 			fiLayerOutputs[0] = fiLayerOutputs[0].reshape(elem_shape)
 			get_pred = K.function([model.layers[randnum + 1].input], [model.layers[-1].output])
 			pred = get_pred([fiLayerOutputs])
 
+			temp_fiLayerOutputs = fiLayerOutputs[0]
+			self.logger.info("Faulty Layer [" + str(randnum) + "]: \n")
+			self.logger.info(temp_fiLayerOutputs)
+			self.logger.info("Completed injections... exiting")
+
 			# Uncomment below line and comment next two lines for ImageNet models
 			# return pred
 			labels = np.argmax(pred, axis=-1)
 			return labels[0]
-			
-			logging.info("Completed injections... exiting")
+
+			logging.info("Completed injections... exiting")	
 
 		elif(fiConf["Mode"] == "multiple"):
 
 			""" Multiple layer fault injection mode """
 
-			logging.info("Starting fault injection in all layers")
+			self.logger.info(str(datetime.now().strftime("%d/%m/%Y %H:%M:%S"))+":")
+			self.logger.info("----------------Starting fault injection in all layers----------------\n")
 
 			# Retrieve type and amount of fault
 			fiFault = fiConf["Type"]
 			fiSz = fiConf["Amount"]
+
+			self.logger.info("Type of Fault: " + str(fiConf["Type"]))
+			self.logger.info("Amount of Faults: " + str(fiConf["Amount"]))
 
 			# Get the input for which dynamic injection is to be done
 			x_test = kwargs["x_test"]
@@ -245,6 +343,9 @@ class inject():
 			# Get the outputs of the first layer
 			get_output_0 = K.function([model.layers[0].input], [model.layers[1].output])
 			fiLayerOutputs = get_output_0([x_test])
+
+			self.logger.info("\n Original Layer [" + str(randnum) + "] Outputs: \n")
+			self.logger.info(get_output([x_test]))
 
 			# Loop through each available layer in the model
 			for n in range(1, len(model.layers) - 2):
@@ -258,24 +359,41 @@ class inject():
 					fiSz = math.floor(fiSz)
 
 				# Choose the indices for FI
-				ind = random.sample(range(num), fiSz)
+				#ind = random.sample(range(num), fiSz)
+				ind = np.random.choice(range(num), fiSz, replace=True)
+				self.logger.info("\nLayer Output Indicies (#s) to Inject: " + str(ind) + "\n")
 
 				# Inject the specified fault into the randomly chosen values
+				item_counter = 0
+
 				if(fiFault == "zeros"):
 					for item in ind:
+						self.logger.info("("+ str(item_counter) +") Original Output #" + str(item) + " Value: " + str(float(fiLayerOutputs[0][item])))
 						fiLayerOutputs[0][item] = 0.
+						item_counter+=1
 				elif(fiFault == "random"):
 					for item in ind:
+						self.logger.info("("+ str(item_counter) +") Original Output #" + str(item) + " Value: " + str(float(fiLayerOutputs[0][item])))
 						fiLayerOutputs[0][item] = np.random.random()
+						self.logger.info("("+ str(item_counter) +") Faulty Output #" + str(item) + " Value:   " + str(fiLayerOutputs[0][item]))
+						item_counter+=1
 				elif(fiFault == "bitflips"):
 					for item in ind:
 						val = fiLayerOutputs[0][item]
 						if(fiConf["Bit"] == "N"):
 							pos = random.randint(0, 31)
+							self.logger.info("("+ str(item_counter) +") Bit Position in 32-Bit Output #" + str(item) + " to be Flipped: " + str(pos))
 						else:
 							pos = int(fiConf["Bit"])
+							self.logger.info("("+ str(item_counter) +") Bit Position in 32-Bit Output #" + str(item) + " to be Flipped:" + str(pos))
+
 						val_ = bitflip(val, pos)
 						fiLayerOutputs[0][item] = val_
+
+						self.logger.info("("+ str(item_counter) +") Original #" + str(item) + " Value: " + str(float(val)))
+						self.logger.info("("+ str(item_counter) +") Faulty #" + str(item) + " Value:   " + str(val_))
+						self.logger.info("")
+						item_counter+=1
 
 				# Reshape into original dimensions
 				fiLayerOutputs[0] = fiLayerOutputs[0].reshape(elem_shape)
@@ -292,9 +410,14 @@ class inject():
 				get_pred = K.function([model.layers[len(model.layers)-1].input], [model.layers[-1].output])
 				pred = get_pred([fiLayerOutputs])
 
+				temp_fiLayerOutputs = fiLayerOutputs[0]
+				self.logger.info("Faulty Layer [" + str(randnum) + "]: \n")
+				self.logger.info(temp_fiLayerOutputs)
+				self.logger.info("Completed injections... exiting")
+
 				# Uncomment below line and comment next two lines for ImageNet models
 				# return pred
 				labels = np.argmax(pred, axis=-1)
 				return labels[0]
 				
-				logging.info("Completed injections... exiting")				
+				logging.info("Completed injections... exiting")
